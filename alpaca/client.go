@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
-	"github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
-	"github.com/alpacahq/alpaca-trade-api-go/v3/marketdata"
 	"github.com/shopspring/decimal"
 
 	"github.com/MunishMummadi/mock-trade-algorithm/config"
@@ -15,248 +14,185 @@ import (
 )
 
 type Client struct {
-	alpacaClient *alpaca.Client
-	marketClient *marketdata.Client
 	config       *config.Config
+	mockPrices   map[string]decimal.Decimal
+	mockAccounts map[string]decimal.Decimal
+}
+
+type MockAccount struct {
+	ID            string          `json:"id"`
+	AccountNumber string          `json:"account_number"`
+	Status        string          `json:"status"`
+	Cash          decimal.Decimal `json:"cash"`
+	BuyingPower   decimal.Decimal `json:"buying_power"`
+}
+
+type MockPosition struct {
+	Symbol        string          `json:"symbol"`
+	Qty           decimal.Decimal `json:"qty"`
+	AvgEntryPrice decimal.Decimal `json:"avg_entry_price"`
+	MarketValue   decimal.Decimal `json:"market_value"`
+}
+
+type MockOrder struct {
+	ID        string          `json:"id"`
+	Symbol    string          `json:"symbol"`
+	Qty       decimal.Decimal `json:"qty"`
+	Side      string          `json:"side"`
+	OrderType string          `json:"order_type"`
+	Status    string          `json:"status"`
+	Price     decimal.Decimal `json:"price"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type MockBar struct {
+	Timestamp time.Time `json:"timestamp"`
+	Open      float64   `json:"open"`
+	High      float64   `json:"high"`
+	Low       float64   `json:"low"`
+	Close     float64   `json:"close"`
+	Volume    int64     `json:"volume"`
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
-	// Initialize Alpaca trading client
-	alpacaClient := alpaca.NewClient(alpaca.ClientOpts{
-		APIKey:    cfg.AlpacaAPIKey,
-		APISecret: cfg.AlpacaAPISecret,
-		BaseURL:   cfg.AlpacaBaseURL,
-	})
-
-	// Initialize market data client
-	marketClient := marketdata.NewClient(marketdata.ClientOpts{
-		APIKey:    cfg.AlpacaAPIKey,
-		APISecret: cfg.AlpacaAPISecret,
-	})
-
 	client := &Client{
-		alpacaClient: alpacaClient,
-		marketClient: marketClient,
 		config:       cfg,
+		mockPrices:   make(map[string]decimal.Decimal),
+		mockAccounts: make(map[string]decimal.Decimal),
 	}
 
-	// Verify connection
-	if err := client.verifyConnection(); err != nil {
-		return nil, fmt.Errorf("failed to verify Alpaca connection: %w", err)
-	}
+	// Initialize mock prices for common stocks
+	client.initializeMockPrices()
 
-	log.Println("Successfully connected to Alpaca API")
+	log.Println("Successfully initialized Mock Alpaca API client")
 	return client, nil
 }
 
-func (c *Client) verifyConnection() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Test connection by getting account information
-	_, err := c.alpacaClient.GetAccount(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get account info: %w", err)
+func (c *Client) initializeMockPrices() {
+	// Initialize with realistic stock prices
+	stockPrices := map[string]float64{
+		"AAPL":  175.50,
+		"GOOGL": 135.25,
+		"MSFT":  378.85,
+		"TSLA":  238.45,
+		"AMZN":  145.30,
+		"NVDA":  875.25,
+		"META":  485.60,
+		"NFLX":  425.75,
 	}
 
-	return nil
+	for symbol, price := range stockPrices {
+		c.mockPrices[symbol] = decimal.NewFromFloat(price)
+	}
 }
 
-func (c *Client) GetAccount(ctx context.Context) (*alpaca.Account, error) {
-	return c.alpacaClient.GetAccount(ctx)
+func (c *Client) GetAccount(ctx context.Context) (*MockAccount, error) {
+	return &MockAccount{
+		ID:            "mock_account_123",
+		AccountNumber: "123456789",
+		Status:        "ACTIVE",
+		Cash:          decimal.NewFromFloat(c.config.InitialBalance),
+		BuyingPower:   decimal.NewFromFloat(c.config.InitialBalance * 2), // 2x leverage
+	}, nil
 }
 
-func (c *Client) PlaceOrder(ctx context.Context, trade *models.Trade) (*alpaca.Order, error) {
-	orderSide := alpaca.Buy
-	if trade.Side == models.OrderSideSell {
-		orderSide = alpaca.Sell
+func (c *Client) IsMarketOpen(ctx context.Context) (bool, error) {
+	now := time.Now()
+	// Simple mock: market is open Monday-Friday 9:30 AM - 4:00 PM ET
+	if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
+		return false, nil
 	}
 
-	orderType := alpaca.Market
-	switch trade.Type {
-	case models.TradeTypeLimit:
-		orderType = alpaca.Limit
-	case models.TradeTypeStop:
-		orderType = alpaca.Stop
-	}
-
-	orderRequest := alpaca.PlaceOrderRequest{
-		Symbol:      trade.Symbol,
-		Qty:         trade.Quantity,
-		Side:        orderSide,
-		Type:        orderType,
-		TimeInForce: alpaca.DAY,
-	}
-
-	if trade.Type == models.TradeTypeLimit || trade.Type == models.TradeTypeStop {
-		orderRequest.LimitPrice = &trade.Price
-	}
-
-	order, err := c.alpacaClient.PlaceOrder(ctx, orderRequest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to place order: %w", err)
-	}
-
-	return order, nil
-}
-
-func (c *Client) GetOrder(ctx context.Context, orderID string) (*alpaca.Order, error) {
-	return c.alpacaClient.GetOrder(ctx, orderID)
-}
-
-func (c *Client) CancelOrder(ctx context.Context, orderID string) error {
-	return c.alpacaClient.CancelOrder(ctx, orderID)
-}
-
-func (c *Client) GetPositions(ctx context.Context) ([]alpaca.Position, error) {
-	return c.alpacaClient.GetPositions(ctx)
-}
-
-func (c *Client) GetPosition(ctx context.Context, symbol string) (*alpaca.Position, error) {
-	return c.alpacaClient.GetPosition(ctx, symbol)
-}
-
-func (c *Client) GetLatestQuote(ctx context.Context, symbol string) (*marketdata.LatestQuote, error) {
-	quotes, err := c.marketClient.GetLatestQuotes(ctx, marketdata.GetLatestQuotesRequest{
-		Symbols: []string{symbol},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest quote for %s: %w", symbol, err)
-	}
-
-	quote, exists := quotes[symbol]
-	if !exists {
-		return nil, fmt.Errorf("quote not found for symbol %s", symbol)
-	}
-
-	return &quote, nil
-}
-
-func (c *Client) GetLatestTrade(ctx context.Context, symbol string) (*marketdata.LatestTrade, error) {
-	trades, err := c.marketClient.GetLatestTrades(ctx, marketdata.GetLatestTradesRequest{
-		Symbols: []string{symbol},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest trade for %s: %w", symbol, err)
-	}
-
-	trade, exists := trades[symbol]
-	if !exists {
-		return nil, fmt.Errorf("trade not found for symbol %s", symbol)
-	}
-
-	return &trade, nil
-}
-
-func (c *Client) GetBars(ctx context.Context, symbol string, timeframe marketdata.TimeFrame,
-	start, end time.Time) ([]marketdata.Bar, error) {
-
-	req := marketdata.GetBarsRequest{
-		Symbols:   []string{symbol},
-		TimeFrame: timeframe,
-		Start:     start,
-		End:       end,
-	}
-
-	resp, err := c.marketClient.GetBars(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bars for %s: %w", symbol, err)
-	}
-
-	bars, exists := resp[symbol]
-	if !exists {
-		return nil, fmt.Errorf("bars not found for symbol %s", symbol)
-	}
-
-	return bars, nil
+	hour := now.Hour()
+	return hour >= 9 && hour < 16, nil
 }
 
 func (c *Client) GetCurrentPrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
-	quote, err := c.GetLatestQuote(ctx, symbol)
-	if err != nil {
-		// Fallback to latest trade if quote is not available
-		trade, tradeErr := c.GetLatestTrade(ctx, symbol)
-		if tradeErr != nil {
-			return decimal.Zero, fmt.Errorf("failed to get current price for %s: quote error: %w, trade error: %w",
-				symbol, err, tradeErr)
-		}
-		return decimal.NewFromFloat(trade.Price), nil
+	// Get base price
+	basePrice, exists := c.mockPrices[symbol]
+	if !exists {
+		return decimal.Zero, fmt.Errorf("price not available for symbol %s", symbol)
 	}
 
-	// Use mid-price between bid and ask
-	bid := decimal.NewFromFloat(quote.BidPrice)
-	ask := decimal.NewFromFloat(quote.AskPrice)
-	return bid.Add(ask).Div(decimal.NewFromInt(2)), nil
+	// Add some random fluctuation (±2%)
+	fluctuation := (rand.Float64() - 0.5) * 0.04 // -2% to +2%
+	currentPrice := basePrice.Mul(decimal.NewFromFloat(1 + fluctuation))
+
+	// Update the stored price for next time
+	c.mockPrices[symbol] = currentPrice
+
+	return currentPrice, nil
 }
 
 func (c *Client) GetMultiplePrices(ctx context.Context, symbols []string) (map[string]decimal.Decimal, error) {
-	quotes, err := c.marketClient.GetLatestQuotes(ctx, marketdata.GetLatestQuotesRequest{
-		Symbols: symbols,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get quotes for symbols: %w", err)
-	}
-
 	prices := make(map[string]decimal.Decimal)
-	for symbol, quote := range quotes {
-		bid := decimal.NewFromFloat(quote.BidPrice)
-		ask := decimal.NewFromFloat(quote.AskPrice)
-		prices[symbol] = bid.Add(ask).Div(decimal.NewFromInt(2))
-	}
 
-	// For symbols without quotes, try to get trades
 	for _, symbol := range symbols {
-		if _, exists := prices[symbol]; !exists {
-			trade, err := c.GetLatestTrade(ctx, symbol)
-			if err != nil {
-				log.Printf("Warning: failed to get price for %s: %v", symbol, err)
-				continue
-			}
-			prices[symbol] = decimal.NewFromFloat(trade.Price)
+		price, err := c.GetCurrentPrice(ctx, symbol)
+		if err != nil {
+			log.Printf("Warning: failed to get price for %s: %v", symbol, err)
+			continue
 		}
+		prices[symbol] = price
 	}
 
 	return prices, nil
 }
 
-func (c *Client) IsMarketOpen(ctx context.Context) (bool, error) {
-	clock, err := c.alpacaClient.GetClock(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to get market clock: %w", err)
+func (c *Client) GetBars(ctx context.Context, symbol string, timeframe interface{}, start, end time.Time) ([]MockBar, error) {
+	// Generate mock historical data
+	var bars []MockBar
+
+	basePrice, exists := c.mockPrices[symbol]
+	if !exists {
+		basePrice = decimal.NewFromFloat(100.0) // Default price
 	}
 
-	return clock.IsOpen, nil
-}
+	current := start
+	price := basePrice.InexactFloat64()
 
-func (c *Client) GetMarketCalendar(ctx context.Context, start, end time.Time) ([]alpaca.CalendarDay, error) {
-	return c.alpacaClient.GetCalendar(ctx, &alpaca.GetCalendarRequest{
-		Start: &start,
-		End:   &end,
-	})
-}
+	for current.Before(end) && len(bars) < 100 {
+		// Generate realistic OHLC data
+		open := price
 
-func (c *Client) StreamTrades(ctx context.Context, symbols []string, handler func(marketdata.Trade)) error {
-	tradeHandler := func(trade marketdata.Trade) {
-		handler(trade)
+		// Random daily change (±5%)
+		change := (rand.Float64() - 0.5) * 0.1
+		close := open * (1 + change)
+
+		// High and low based on volatility
+		volatility := rand.Float64() * 0.03 // 0-3% intraday range
+		high := open * (1 + volatility)
+		low := open * (1 - volatility)
+
+		// Ensure OHLC makes sense
+		if close > high {
+			high = close
+		}
+		if close < low {
+			low = close
+		}
+
+		bars = append(bars, MockBar{
+			Timestamp: current,
+			Open:      open,
+			High:      high,
+			Low:       low,
+			Close:     close,
+			Volume:    int64(rand.Intn(10000000) + 1000000), // 1M-11M volume
+		})
+
+		price = close
+		current = current.AddDate(0, 0, 1) // Next day
 	}
 
-	return c.marketClient.SubscribeTrades(ctx, tradeHandler, symbols...)
+	return bars, nil
 }
 
-func (c *Client) StreamQuotes(ctx context.Context, symbols []string, handler func(marketdata.Quote)) error {
-	quoteHandler := func(quote marketdata.Quote) {
-		handler(quote)
-	}
-
-	return c.marketClient.SubscribeQuotes(ctx, quoteHandler, symbols...)
-}
-
-// Mock trading methods for paper trading
 func (c *Client) MockPlaceOrder(trade *models.Trade) error {
 	// Simulate order processing delay
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(time.Duration(rand.Intn(200)+50) * time.Millisecond)
 
-	// For mock trading, we'll simulate immediate fills at current market price
+	// Get current price for the symbol
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -265,21 +201,100 @@ func (c *Client) MockPlaceOrder(trade *models.Trade) error {
 		return fmt.Errorf("failed to get current price for mock order: %w", err)
 	}
 
-	// Add some realistic slippage for market orders
-	slippage := decimal.NewFromFloat(0.001) // 0.1% slippage
+	// Simulate market impact and slippage
+	slippage := c.calculateSlippage(trade)
+	fillPrice := currentPrice
+
 	if trade.Type == models.TradeTypeMarket {
 		if trade.Side == models.OrderSideBuy {
-			currentPrice = currentPrice.Mul(decimal.NewFromInt(1).Add(slippage))
+			fillPrice = currentPrice.Add(slippage)
 		} else {
-			currentPrice = currentPrice.Mul(decimal.NewFromInt(1).Sub(slippage))
+			fillPrice = currentPrice.Sub(slippage)
+		}
+	} else {
+		// For limit orders, fill at the limit price if market allows
+		if trade.Side == models.OrderSideBuy && currentPrice.LessThanOrEqual(trade.Price) {
+			fillPrice = trade.Price
+		} else if trade.Side == models.OrderSideSell && currentPrice.GreaterThanOrEqual(trade.Price) {
+			fillPrice = trade.Price
+		} else {
+			// Order doesn't fill immediately
+			trade.Status = models.TradeStatusPending
+			trade.AlpacaOrderID = fmt.Sprintf("mock_pending_%d_%s", time.Now().Unix(), trade.Symbol)
+			return nil
 		}
 	}
 
-	// Mock commission (Alpaca has commission-free trading, but we can simulate)
+	// Mock commission (Alpaca is commission-free, but we can simulate other costs)
 	commission := decimal.Zero
 
-	trade.MarkFilled(currentPrice, commission)
+	// Random chance of rejection (1% for realism)
+	if rand.Float64() < 0.01 {
+		trade.Status = models.TradeStatusRejected
+		trade.AlpacaOrderID = fmt.Sprintf("mock_rejected_%d_%s", time.Now().Unix(), trade.Symbol)
+		return fmt.Errorf("mock order rejected due to insufficient funds or market conditions")
+	}
+
+	trade.MarkFilled(fillPrice, commission)
 	trade.AlpacaOrderID = fmt.Sprintf("mock_%d_%s", time.Now().Unix(), trade.Symbol)
 
+	log.Printf("Mock order filled: %s %s %s @ $%.2f",
+		trade.Side, trade.Quantity.String(), trade.Symbol, fillPrice.InexactFloat64())
+
 	return nil
+}
+
+func (c *Client) calculateSlippage(trade *models.Trade) decimal.Decimal {
+	// Calculate slippage based on order size and market conditions
+	baseSlippage := decimal.NewFromFloat(0.001) // 0.1% base slippage
+
+	// Larger orders have more slippage
+	sizeMultiplier := trade.Quantity.Div(decimal.NewFromInt(100))
+	if sizeMultiplier.GreaterThan(decimal.NewFromInt(1)) {
+		baseSlippage = baseSlippage.Mul(sizeMultiplier)
+	}
+
+	// Add some randomness
+	randomFactor := decimal.NewFromFloat(rand.Float64() * 0.002) // 0-0.2% random
+	slippage := baseSlippage.Add(randomFactor)
+
+	// Apply to current price
+	currentPrice := c.mockPrices[trade.Symbol]
+	return currentPrice.Mul(slippage)
+}
+
+// Simplified methods that don't rely on complex external APIs
+func (c *Client) GetOrder(ctx context.Context, orderID string) (*MockOrder, error) {
+	// Mock implementation
+	return &MockOrder{
+		ID:        orderID,
+		Symbol:    "AAPL",
+		Qty:       decimal.NewFromInt(10),
+		Side:      "buy",
+		OrderType: "market",
+		Status:    "filled",
+		Price:     decimal.NewFromFloat(175.50),
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+func (c *Client) CancelOrder(ctx context.Context, orderID string) error {
+	// Mock implementation
+	log.Printf("Mock: Cancelled order %s", orderID)
+	return nil
+}
+
+func (c *Client) GetPositions(ctx context.Context) ([]MockPosition, error) {
+	// Mock implementation - return empty positions
+	return []MockPosition{}, nil
+}
+
+func (c *Client) GetPosition(ctx context.Context, symbol string) (*MockPosition, error) {
+	// Mock implementation
+	return &MockPosition{
+		Symbol:        symbol,
+		Qty:           decimal.Zero,
+		AvgEntryPrice: decimal.Zero,
+		MarketValue:   decimal.Zero,
+	}, nil
 }

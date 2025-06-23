@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  mock-trade-algorithm:
+    build: .
+    container_name: mock-trade-algorithm
+    restart: unless-stopped
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET}
+      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      - DATABASE_PATH=/app/data/trades.db
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - INITIAL_BALANCE=${INITIAL_BALANCE:-100000.0}
+      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-10000.0}
+      - RISK_PERCENTAGE=${RISK_PERCENTAGE:-0.02}
+      - TRADING_ENABLED=${TRADING_ENABLED:-true}
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL:-30s}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    ports:
+      - "8080:8080"
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  trading-network:
+    driver: bridge
+
+volumes:
+  trading-data:
+    driver: local 

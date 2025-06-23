@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alpacahq/alpaca-trade-api-go/v3/marketdata"
 	"github.com/shopspring/decimal"
 
 	"github.com/MunishMummadi/mock-trade-algorithm/alpaca"
@@ -222,7 +221,7 @@ func (e *TradingEngine) processSymbol(ctx context.Context, symbol string, price 
 
 	// Get historical data for analysis
 	bars, err := e.alpacaClient.GetBars(ctx, symbol,
-		marketdata.OneDay, time.Now().AddDate(0, 0, -100), time.Now())
+		"1Day", time.Now().AddDate(0, 0, -100), time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to get historical data for %s: %w", symbol, err)
 	}
